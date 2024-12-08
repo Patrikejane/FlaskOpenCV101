@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Webcam Face Detection</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>Webcam Face Detection</h1>
+    <video id="webcam" autoplay playsinline width="640" height="480"></video>
+    <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+    <img id="output" width="640" height="480" />
+
+    <script>
+        const socket = io.connect();
+
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const output = document.getElementById('output');
+        const ctx = canvas.getContext('2d');
+
+        // Get webcam feed
+        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            video.srcObject = stream;
+            video.play();
+        });
+
+        // Process video frames
+        video.addEventListener('play', () => {
+            setInterval(() => {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const frame = canvas.toDataURL('image/jpeg');
+                socket.emit('video_frame', frame);
+            }, 100); // Send every 100ms
+        });
+
+        // Receive processed frames
+        socket.on('processed_frame', data => {
+            output.src = data.image;
+        });
+    </script>
+</body>
+</html>
