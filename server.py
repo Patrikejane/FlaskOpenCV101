@@ -3,9 +3,52 @@ from flask_socketio import SocketIO
 import cv2
 import face_recognition
 import base64
+import numpy as np
 
 app = Flask(__name__)
 socketio = SocketIO(app)
+
+# Helper function to decode base64 frame to OpenCV image
+def decode_frame(frame_data):
+    try:
+        # Split the base64 data and decode
+        frame_data = frame_data.split(',')[1]
+        frame = base64.b64decode(frame_data)
+        nparr = np.frombuffer(frame, np.uint8)
+        return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    except Exception as e:
+        print(f"Error decoding frame: {e}")
+        return None
+
+# Helper function to detect faces and draw rectangles
+def process_frame(frame):
+    try:
+        # Resize the frame for faster face detection
+        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+
+        # Detect face locations
+        face_locations = face_recognition.face_locations(
+            small_frame, number_of_times_to_upsample=2, model='hog'
+        )
+
+        # Draw rectangles around faces on the original frame
+        for top, right, bottom, left in face_locations:
+            top, right, bottom, left = top*4, right*4, bottom*4, left*4
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
+
+        return frame
+    except Exception as e:
+        print(f"Error processing frame: {e}")
+        return None
+
+# Helper function to encode frame to base64
+def encode_frame_to_base64(frame):
+    try:
+        _, buffer = cv2.imencode('.jpg', frame)
+        return base64.b64encode(buffer).decode('utf-8')
+    except Exception as e:
+        print(f"Error encoding frame: {e}")
+        return None
 
 @app.route('/')
 def index():
@@ -13,29 +56,23 @@ def index():
 
 @socketio.on('video_frame')
 def handle_video_frame(data):
-    # Decode base64 frame
-    frame_data = data.split(',')[1]
-    frame = base64.b64decode(frame_data)
-    nparr = np.frombuffer(frame, np.uint8)
-    current_frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    # Decode the incoming frame
+    current_frame = decode_frame(data)
+    if current_frame is None:
+        return  # Skip processing if frame could not be decoded
 
-    # Resize for processing
-    current_frame_small = cv2.resize(current_frame, (0, 0), fx=0.25, fy=0.25)
+    # Process the frame (detect faces)
+    processed_frame = process_frame(current_frame)
+    if processed_frame is None:
+        return  # Skip processing if frame could not be processed
 
-    # Detect faces
-    all_face_locations = face_recognition.face_locations(
-        current_frame_small, number_of_times_to_upsample=2, model='hog'
-    )
+    # Encode the processed frame back to base64
+    processed_frame_base64 = encode_frame_to_base64(processed_frame)
+    if processed_frame_base64 is None:
+        return  # Skip sending the frame if encoding failed
 
-    # Draw rectangles around faces
-    for top, right, bottom, left in all_face_locations:
-        top, right, bottom, left = top*4, right*4, bottom*4, left*4
-        cv2.rectangle(current_frame, (left, top), (right, bottom), (0, 0, 255), 2)
-
-    # Encode processed frame back to base64
-    _, buffer = cv2.imencode('.jpg', current_frame)
-    processed_frame = base64.b64encode(buffer).decode('utf-8')
-    socketio.emit('processed_frame', {'image': 'data:image/jpeg;base64,' + processed_frame})
+    # Send the processed frame back to the client
+    socketio.emit('processed_frame', {'image': f'data:image/jpeg;base64,{processed_frame_base64}'})
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
